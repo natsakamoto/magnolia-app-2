@@ -120,7 +120,9 @@ if uploaded_file is not None:
     service_fees = filtered_df["Service fee"].sum()
     cleaning_fees = filtered_df["Cleaning fee"].sum()
     taxes = filtered_df["Airbnb remitted tax"].sum()
-    net_amount = filtered_df["Amount"].sum()
+
+    airbnb_amount = gross_earnings - service_fees
+    true_earnings = gross_earnings - service_fees - cleaning_fees
 
     # --------------------------------------------------
     # SUMMARY METRICS
@@ -130,35 +132,69 @@ if uploaded_file is not None:
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric(
-        "Gross Earnings",
-        f"${gross_earnings:,.2f}"
+    with col1:
+        st.metric(
+            "True Earnings",
+            f"${true_earnings:,.2f}"
+        )
+        st.caption("Gross Earnings − Service Fee − Cleaning Fee")
+
+    with col2:
+        st.metric(
+            "Airbnb Amount",
+            f"${airbnb_amount:,.2f}"
+        )
+        st.caption("Gross Earnings − Service Fee")
+
+    with col3:
+        st.metric(
+            "Gross Earnings",
+            f"${gross_earnings:,.2f}"
+        )
+        st.caption("Total earnings before deductions")
+
+    with col4:
+        st.metric(
+            "Cleaning Fees",
+            f"${cleaning_fees:,.2f}"
+        )
+        st.caption("Cleaning fees collected")
+
+    # --------------------------------------------------
+    # DISPLAY METRIC SELECTOR
+    # --------------------------------------------------
+
+    st.subheader("Display Metric")
+
+    display_metric = st.radio(
+        "Choose which earnings metric to display:",
+        [
+            "Airbnb Amount",
+            "True Earnings",
+            "Gross Earnings"
+        ],
+        horizontal=True
     )
 
-    col2.metric(
-        "Service Fees",
-        f"${service_fees:,.2f}"
+    # Create True Earnings column
+    filtered_df["True Earnings"] = (
+        filtered_df["Amount"] - filtered_df["Cleaning fee"]
     )
 
-    col3.metric(
-        "Taxes",
-        f"${taxes:,.2f}"
-    )
+    # Map display choice to dataframe column
+    metric_column_map = {
+        "Airbnb Amount": "Amount",
+        "True Earnings": "True Earnings",
+        "Gross Earnings": "Gross earnings"
+    }
 
-    col4.metric(
-        "Net Amount",
-        f"${net_amount:,.2f}"
-    )
-
-    st.write(
-        f"Cleaning fees collected: **${cleaning_fees:,.2f}**"
-    )
+    selected_metric_column = metric_column_map[display_metric]
 
     # --------------------------------------------------
     # MONTHLY EARNINGS
     # --------------------------------------------------
 
-    st.subheader("Monthly Earnings")
+    st.subheader(f"Monthly {display_metric}")
 
     monthly_df = filtered_df.copy()
 
@@ -170,7 +206,7 @@ if uploaded_file is not None:
 
     monthly_earnings = (
         monthly_df
-        .groupby("Month")["Amount"]
+        .groupby("Month")[selected_metric_column]
         .sum()
     )
 
