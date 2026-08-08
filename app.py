@@ -1,5 +1,8 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import calendar
+from datetime import date
 
 # --------------------------------------------------
 # PAGE SETUP
@@ -80,16 +83,132 @@ if uploaded_file is not None:
         ["All Properties"] + listings
     )
 
-    # Date filter
-    min_date = df["Date"].min().date()
-    max_date = df["Date"].max().date()
+    # --------------------------------------------------
+    # DATE FILTER
+    # --------------------------------------------------
 
-    selected_dates = st.sidebar.date_input(
-        "Date Range",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date
+    # Get valid payout date range from the CSV
+    valid_dates = df["Date"].dropna()
+
+    min_date = valid_dates.min().date()
+    max_date = valid_dates.max().date()
+
+    years = list(range(min_date.year, max_date.year + 1))
+
+    # --------------------------------------------------
+    # START PAYOUT DATE
+    # --------------------------------------------------
+
+    st.sidebar.subheader("Start Payout Date")
+
+    start_col1, start_col2, start_col3 = st.sidebar.columns([3, 2, 2])
+
+    with start_col1:
+        start_month = st.selectbox(
+            "Month",
+            range(1, 13),
+            format_func=lambda x: calendar.month_name[x],
+            index=min_date.month - 1,
+            key="start_month"
+        )
+
+    with start_col2:
+        start_year = st.selectbox(
+            "Year",
+            years,
+            index=0,
+            key="start_year"
+        )
+
+    # Determine valid number of days for selected month/year
+    start_days_in_month = calendar.monthrange(
+        start_year,
+        start_month
+    )[1]
+
+    with start_col3:
+        start_day = st.selectbox(
+            "Day",
+            range(1, start_days_in_month + 1),
+            index=min(
+                min_date.day,
+                start_days_in_month
+            ) - 1,
+            key="start_day"
+        )
+
+    start_date = date(
+        start_year,
+        start_month,
+        start_day
     )
+
+    # Show selected date clearly
+    st.sidebar.caption(
+        f"Selected: {start_date.strftime('%m/%d/%Y')}"
+    )
+
+    # --------------------------------------------------
+    # END PAYOUT DATE
+    # --------------------------------------------------
+
+    st.sidebar.subheader("End Payout Date")
+
+    end_col1, end_col2, end_col3 = st.sidebar.columns([3, 2, 2])
+
+    with end_col1:
+        end_month = st.selectbox(
+            "Month",
+            range(1, 13),
+            format_func=lambda x: calendar.month_name[x],
+            index=max_date.month - 1,
+            key="end_month"
+        )
+
+    with end_col2:
+        end_year = st.selectbox(
+            "Year",
+            years,
+            index=len(years) - 1,
+            key="end_year"
+        )
+
+    end_days_in_month = calendar.monthrange(
+        end_year,
+        end_month
+    )[1]
+
+    with end_col3:
+        end_day = st.selectbox(
+            "Day",
+            range(1, end_days_in_month + 1),
+            index=min(
+                max_date.day,
+                end_days_in_month
+            ) - 1,
+            key="end_day"
+        )
+
+    end_date = date(
+        end_year,
+        end_month,
+        end_day
+    )
+
+    # Show selected date clearly
+    st.sidebar.caption(
+        f"Selected: {end_date.strftime('%m/%d/%Y')}"
+    )
+
+    # --------------------------------------------------
+    # VALIDATE DATES
+    # --------------------------------------------------
+
+    if start_date > end_date:
+        st.sidebar.error(
+            "Start date must be on or before end date."
+        )
+        st.stop()
 
     # --------------------------------------------------
     # APPLY FILTERS
@@ -97,20 +216,33 @@ if uploaded_file is not None:
 
     filtered_df = df.copy()
 
+    # Property filter
     if selected_listing != "All Properties":
         filtered_df = filtered_df[
             filtered_df["Listing"] == selected_listing
         ]
 
-    if len(selected_dates) == 2:
-        start_date = selected_dates[0]
-        end_date = selected_dates[1]
+    # Date filter
+    filtered_df = filtered_df[
+        (filtered_df["Date"].dt.date >= start_date)
+        &
+        (filtered_df["Date"].dt.date <= end_date)
+    ]
 
-        filtered_df = filtered_df[
-            (filtered_df["Date"].dt.date >= start_date)
-            &
-            (filtered_df["Date"].dt.date <= end_date)
-        ]
+    # --------------------------------------------------
+    # CALCULATE ROW-LEVEL EARNINGS
+    # --------------------------------------------------
+
+    filtered_df["Airbnb Payout"] = (
+        filtered_df["Gross earnings"]
+        - filtered_df["Service fee"]
+    )
+
+    filtered_df["True Earnings"] = (
+        filtered_df["Gross earnings"]
+        - filtered_df["Service fee"]
+        - filtered_df["Cleaning fee"]
+    )
 
     # --------------------------------------------------
     # CALCULATE TOTALS
@@ -121,8 +253,8 @@ if uploaded_file is not None:
     cleaning_fees = filtered_df["Cleaning fee"].sum()
     taxes = filtered_df["Airbnb remitted tax"].sum()
 
-    airbnb_amount = gross_earnings - service_fees
-    true_earnings = gross_earnings - service_fees - cleaning_fees
+    airbnb_amount = filtered_df["Airbnb Payout"].sum()
+    true_earnings = filtered_df["True Earnings"].sum()
 
     # --------------------------------------------------
     # SUMMARY METRICS
@@ -134,14 +266,14 @@ if uploaded_file is not None:
 
     with col1:
         st.metric(
-            "True Earnings",
+            "⭐ True Earnings",
             f"${true_earnings:,.2f}"
         )
         st.caption("Gross Earnings − Service Fee − Cleaning Fee")
 
     with col2:
         st.metric(
-            "Airbnb Amount",
+            "Airbnb Payout",
             f"${airbnb_amount:,.2f}"
         )
         st.caption("Gross Earnings − Service Fee")
@@ -169,22 +301,16 @@ if uploaded_file is not None:
     display_metric = st.radio(
         "Choose which earnings metric to display:",
         [
-            "Airbnb Amount",
             "True Earnings",
+            "Airbnb Payout",
             "Gross Earnings"
         ],
         horizontal=True
     )
 
-    # Create True Earnings column
-    filtered_df["True Earnings"] = (
-        filtered_df["Amount"] - filtered_df["Cleaning fee"]
-    )
-
-    # Map display choice to dataframe column
     metric_column_map = {
-        "Airbnb Amount": "Amount",
         "True Earnings": "True Earnings",
+        "Airbnb Payout": "Airbnb Payout",
         "Gross Earnings": "Gross earnings"
     }
 
@@ -196,7 +322,7 @@ if uploaded_file is not None:
 
     st.subheader(f"Monthly {display_metric}")
 
-    monthly_df = filtered_df.copy()
+    monthly_df = filtered_df.dropna(subset=["Date"]).copy()
 
     monthly_df["Month"] = (
         monthly_df["Date"]
@@ -206,11 +332,46 @@ if uploaded_file is not None:
 
     monthly_earnings = (
         monthly_df
-        .groupby("Month")[selected_metric_column]
+        .groupby("Month", as_index=False)[selected_metric_column]
         .sum()
     )
 
-    st.bar_chart(monthly_earnings)
+    if not monthly_earnings.empty:
+
+        fig = px.line(
+            monthly_earnings,
+            x="Month",
+            y=selected_metric_column,
+            markers=True
+        )
+
+        fig.update_layout(
+            xaxis_title="Month",
+            yaxis_title=display_metric,
+            hovermode="x unified"
+        )
+
+        fig.update_yaxes(
+            tickprefix="$",
+            tickformat=",.0f"
+        )
+
+        fig.update_traces(
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                + display_metric
+                + ": $%{y:,.2f}<extra></extra>"
+            )
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+    else:
+        st.info("No earnings data available for the selected filters.")
+
 
     # --------------------------------------------------
     # TRANSACTION TABLE
@@ -220,17 +381,18 @@ if uploaded_file is not None:
 
     display_columns = [
         "Date",
-        "Type",
         "Confirmation code",
+        "Booking date",
         "Start date",
         "End date",
         "Nights",
         "Guest",
         "Listing",
-        "Amount",
+        "Gross earnings",
         "Service fee",
         "Cleaning fee",
-        "Gross earnings",
+        "Airbnb Payout",
+        "True Earnings",
         "Airbnb remitted tax"
     ]
 
@@ -240,8 +402,27 @@ if uploaded_file is not None:
         if column in filtered_df.columns
     ]
 
+    display_df = filtered_df[available_columns].copy()
+
+    date_columns_display = [
+        "Date",
+        "Booking date",
+        "Start date",
+        "End date"
+    ]
+
+    for column in date_columns_display:
+        if column in display_df.columns:
+            display_df[column] = display_df[column].dt.strftime("%m/%d/%Y")
+
+    display_df = display_df.rename(
+        columns={
+            "Date": "Payout Date"
+        }
+    )
+
     st.dataframe(
-        filtered_df[available_columns],
+        display_df,
         use_container_width=True
     )
 
