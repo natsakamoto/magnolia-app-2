@@ -64,6 +64,9 @@ if uploaded_file is not None:
                 errors="coerce"
             ).fillna(0)
 
+    # HERE DONT FORGET
+    st.session_state["df"] = df
+
     # --------------------------------------------------
     # SIDEBAR FILTERS
     # --------------------------------------------------
