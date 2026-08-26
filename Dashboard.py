@@ -346,20 +346,30 @@ with col4:
     st.caption("Cleaning fees collected")
 
 # --------------------------------------------------
-# DISPLAY METRIC SELECTOR
+# DISPLAY CONTROLS
 # --------------------------------------------------
 
-st.subheader("Display Metric")
+st.subheader("Display Options")
 
-display_metric = st.radio(
-    "Choose which earnings metric to display:",
-    [
-        "True Earnings",
-        "Airbnb Payout",
-        "Gross Earnings"
-    ],
-    horizontal=True
-)
+control1, control2 = st.columns([2, 1])
+
+with control1:
+    display_metric = st.radio(
+        "Earnings Metric",
+        [
+            "True Earnings",
+            "Airbnb Payout",
+            "Gross Earnings"
+        ],
+        horizontal=True
+    )
+
+with control2:
+    chart_type = st.radio(
+        "Chart Type",
+        ["Line", "Bar"],
+        horizontal=True
+    )
 
 metric_column_map = {
     "True Earnings": "True Earnings",
@@ -391,12 +401,20 @@ monthly_earnings = (
 
 if not monthly_earnings.empty:
 
-    fig = px.line(
-        monthly_earnings,
-        x="Month",
-        y=selected_metric_column,
-        markers=True
-    )
+    if chart_type == "Line":
+        fig = px.line(
+            monthly_earnings,
+            x="Month",
+            y=selected_metric_column,
+            markers=True
+        )
+    else:
+        fig = px.bar(
+            monthly_earnings,
+            x="Month",
+            y=selected_metric_column,
+            text=selected_metric_column
+        )
 
     fig.update_layout(
         xaxis_title="Month",
@@ -409,13 +427,23 @@ if not monthly_earnings.empty:
         tickformat=",.0f"
     )
 
-    fig.update_traces(
-        hovertemplate=(
-            "<b>%{x}</b><br>"
-            + display_metric
-            + ": $%{y:,.2f}<extra></extra>"
+    if chart_type == "Bar":
+        fig.update_traces(
+            texttemplate="$%{text:,.0f}",
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                + display_metric
+                + ": $%{y:,.2f}<extra></extra>"
+            )
         )
-    )
+    else:
+        fig.update_traces(
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                + display_metric
+                + ": $%{y:,.2f}<extra></extra>"
+            )
+        )
 
     st.plotly_chart(
         fig,
