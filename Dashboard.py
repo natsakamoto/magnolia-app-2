@@ -21,24 +21,69 @@ st.write("Upload an Airbnb earnings CSV to view and filter your earnings data.")
 # FILE UPLOAD + SESSION STATE
 # --------------------------------------------------
 
-# Keep the uploader visible only when no dataset is currently stored.
-# This avoids the dashboard depending on the uploader widget after
-# navigating between pages.
+# Airbnb provides past/payout data and future booking data separately.
+# Upload both reports here and the dashboard will standardize and merge them.
+
 if "df" not in st.session_state:
 
-    uploaded_file = st.file_uploader(
-        "Upload Airbnb CSV",
-        type=["csv"],
-        key="airbnb_csv_uploader"
+    st.subheader("Upload Airbnb Data")
+    st.caption(
+        "Upload the past earnings/payout CSV and the future bookings CSV. "
+        "The dashboard will combine them automatically."
     )
 
-    if uploaded_file is not None:
+    upload_col1, upload_col2 = st.columns(2)
 
-        df = pd.read_csv(uploaded_file)
+    with upload_col1:
+        past_file = st.file_uploader(
+            "Past Earnings / Payout CSV",
+            type=["csv"],
+            key="past_airbnb_csv"
+        )
 
-        # Clean date columns
+    with upload_col2:
+        future_file = st.file_uploader(
+            "Future Bookings CSV",
+            type=["csv"],
+            key="future_airbnb_csv"
+        )
+
+    if past_file is not None and future_file is not None:
+
+        past_df = pd.read_csv(past_file)
+        future_df = pd.read_csv(future_file)
+
+        past_df.columns = past_df.columns.str.strip()
+        future_df.columns = future_df.columns.str.strip()
+
+        # Keep the source file for reference. Booking Status itself will be
+        # recalculated later from Start date and today's date.
+        past_df["Data Source"] = "Past Earnings / Payout"
+        future_df["Data Source"] = "Future Bookings"
+
+        all_columns = list(
+            dict.fromkeys(
+                list(past_df.columns) + list(future_df.columns)
+            )
+        )
+
+        for column in all_columns:
+            if column not in past_df.columns:
+                past_df[column] = pd.NA
+            if column not in future_df.columns:
+                future_df[column] = pd.NA
+
+        past_df = past_df[all_columns]
+        future_df = future_df[all_columns]
+
+        df = pd.concat(
+            [past_df, future_df],
+            ignore_index=True
+        )
+
         date_columns = [
             "Date",
+            "Arriving by",
             "Booking date",
             "Start date",
             "End date"
@@ -51,10 +96,11 @@ if "df" not in st.session_state:
                     errors="coerce"
                 )
 
-        # Clean money columns
         money_columns = [
             "Amount",
+            "Paid out",
             "Service fee",
+            "Fast pay fee",
             "Cleaning fee",
             "Gross earnings",
             "Airbnb remitted tax"
@@ -67,23 +113,96 @@ if "df" not in st.session_state:
                     errors="coerce"
                 ).fillna(0)
 
-        # Clean Nights column
         if "Nights" in df.columns:
             df["Nights"] = pd.to_numeric(
                 df["Nights"],
                 errors="coerce"
             ).fillna(0)
 
-        # Store the cleaned dataframe for all pages in this session.
-        st.session_state["df"] = df
+        # --------------------------------------------------
+        # REMOVE DUPLICATE RESERVATIONS
+        # --------------------------------------------------
+        # The same reservation can appear in an older Future Bookings report
+        # and a newer Past Earnings / Payout report. Prefer the Past/Payout
+        # version because it contains the finalized financial information.
+        if "Confirmation code" in df.columns:
 
-        # Rerun so the dashboard immediately switches from upload mode
-        # to stored-data mode.
+            df["Confirmation code"] = (
+                df["Confirmation code"]
+                .astype("string")
+                .str.strip()
+            )
+
+            has_code = (
+                df["Confirmation code"].notna()
+                & (df["Confirmation code"] != "")
+                & (df["Confirmation code"].str.lower() != "nan")
+            )
+
+            coded_rows = df.loc[has_code].copy()
+            uncoded_rows = df.loc[~has_code].copy()
+
+            if not coded_rows.empty:
+                coded_rows["_source_priority"] = (
+                    coded_rows["Data Source"]
+                    .eq("Past Earnings / Payout")
+                    .astype(int)
+                )
+
+                coded_rows = (
+                    coded_rows
+                    .sort_values("_source_priority")
+                    .drop_duplicates(
+                        subset=["Confirmation code"],
+                        keep="last"
+                    )
+                    .drop(columns="_source_priority")
+                )
+
+            df = pd.concat(
+                [coded_rows, uncoded_rows],
+                ignore_index=True
+            )
+
+        # --------------------------------------------------
+        # CLASSIFY PAST VS FUTURE USING TODAY'S DATE
+        # --------------------------------------------------
+        # This makes an older Future Bookings export safe to use. A stay that
+        # has already begun will be treated as Past even if it came from the
+        # Future Bookings CSV.
+        today = pd.Timestamp.today().normalize()
+
+        if "Start date" in df.columns:
+            df["Booking Status"] = "Unknown"
+
+            valid_start = df["Start date"].notna()
+
+            df.loc[
+                valid_start & (df["Start date"] < today),
+                "Booking Status"
+            ] = "Past"
+
+            df.loc[
+                valid_start & (df["Start date"] >= today),
+                "Booking Status"
+            ] = "Future"
+
+            df = df.sort_values(
+                "Start date",
+                na_position="last"
+            ).reset_index(drop=True)
+
+        st.session_state["df"] = df
+        st.session_state["past_file_name"] = past_file.name
+        st.session_state["future_file_name"] = future_file.name
+
         st.rerun()
 
-# If there is still no stored dataframe, there is nothing to display.
+    elif past_file is not None or future_file is not None:
+        st.info("Upload the other Airbnb CSV to combine and load the data.")
+
 if "df" not in st.session_state:
-    st.info("Upload an Airbnb earnings CSV above to get started.")
+    st.info("Upload both Airbnb CSV files above to get started.")
     st.stop()
 
 # --------------------------------------------------
@@ -92,18 +211,33 @@ if "df" not in st.session_state:
 
 df = st.session_state["df"].copy()
 
-# Show a clear button once data is loaded.
+past_count = (df["Booking Status"] == "Past").sum()
+future_count = (df["Booking Status"] == "Future").sum()
+unknown_count = (df["Booking Status"] == "Unknown").sum()
+
+status_message = (
+    f"Combined data loaded: {len(df):,} rows "
+    f"({past_count:,} past, {future_count:,} future)"
+)
+
+if unknown_count:
+    status_message += f" • {unknown_count:,} row(s) have no valid Start date"
+
+st.success(status_message)
+
 clear_col, _ = st.columns([1, 4])
 
 with clear_col:
     if st.button(
-        "Clear / Upload New File",
+        "Clear / Upload New Files",
         type="secondary"
     ):
-        del st.session_state["df"]
-
-        # Clear dashboard filter widgets so the next file starts fresh.
-        filter_keys = [
+        keys_to_clear = [
+            "df",
+            "past_file_name",
+            "future_file_name",
+            "past_airbnb_csv",
+            "future_airbnb_csv",
             "start_month",
             "start_year",
             "start_day",
@@ -112,7 +246,7 @@ with clear_col:
             "end_day"
         ]
 
-        for key in filter_keys:
+        for key in keys_to_clear:
             st.session_state.pop(key, None)
 
         st.rerun()
@@ -462,6 +596,8 @@ st.subheader("Transactions")
 
 display_columns = [
     "Date",
+    "Booking Status",
+    "Data Source",
     "Confirmation code",
     "Booking date",
     "Start date",
